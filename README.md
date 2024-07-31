@@ -1,2 +1,2 @@
 # Xoodoo-NC
-A minimalistic version of the Xoodoo-NC verilog code is provided here
+A minimalistic version of the Xoodoo-NC in Python and Verilog.
