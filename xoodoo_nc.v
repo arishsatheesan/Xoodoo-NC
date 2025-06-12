@@ -1,12 +1,30 @@
-
 `timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 03/24/2020 02:20:14 PM
+// Design Name: 
+// Module Name: xoodoo
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
 
-/*** Only full rounds are considered ***/
 
 module xoodoo_nc#(
 parameter integer x=1, //only 32 bits. No plane, only lane
 parameter integer y=3, // number of (p)lanes.
 parameter integer z=32, // number of bits in each lane
+parameter integer HASH_IN_SIZE = 96, // number of bits in each lane
 parameter integer CONCAT_FACTOR = 1, // how many times output to be concatanated
 parameter integer HASH_SIZE = CONCAT_FACTOR*96,
 parameter integer rounds = 3,
@@ -26,108 +44,99 @@ parameter integer RC_11=32'h00000012
 )
 (
 input clk,
-input rst,
-input dv, // single pulse
-input [95:0] state, // state (input message)
+input dv,
+input [HASH_IN_SIZE-1:0] state, //state
 output [HASH_SIZE-1:0] out,
 output out_valid
     );
-    wire clk_i;
-    wire dv_i;
-    wire rst_i;
-    wire [95:0] state_i;
-    wire [31:0] RC [0:11];
-//    reg delay_dv;
 
-    reg [HASH_SIZE-1:0] out_o;
-    reg [95:0]round_out[0:rounds-1];
-    reg out_valid_o;
+    reg [HASH_SIZE-1:0] out_o=0;
+    wire [HASH_IN_SIZE-1:0]round_out[0:rounds-1];
+    reg out_valid_o=0;
         
-    reg [z-1:0] A [0:y-1]; //(p)lane A
-    reg [z-1:0] P;
-    reg [z-1:0] E;
-    reg [z-1:0] B [0:y-1];
-    
-    assign clk_i = clk;
-    assign dv_i = dv;
-//    assign dv_i = dv && ~delay_dv;
-    assign rst_i = rst;
-    assign state_i = state;
     assign out=out_o;
     assign out_valid = out_valid_o;
     
-    assign RC[0]=RC_0;
-    assign RC[1]=RC_1;
-    assign RC[2]=RC_2;
-    assign RC[3]=RC_3;
-    assign RC[4]=RC_4;
-    assign RC[5]=RC_5;
-    assign RC[6]=RC_6;
-    assign RC[7]=RC_7;
-    assign RC[8]=RC_8;
-    assign RC[9]=RC_9;
-    assign RC[10]=RC_10;
-    assign RC[11]=RC_11;
+    generate
+        round_fn ROUND_1(     
+        .state(state),
+        .RC(RC_8),
+        .round(round_out[0])
+        );
+        
+        round_fn ROUND_2(     
+        .state(round_out[0]),
+        .RC(RC_9),
+        .round(round_out[1])
+        );
+        
+        round_fn ROUND_3(     
+        .state(round_out[1]),
+        .RC(RC_10),
+        .round(round_out[2])
+        );
+        
+//        round_fn ROUND_4(     
+//        .state(round_out[2]),
+//        .RC(RC_11),
+//        .round(round_out[3])
+//        );
+    endgenerate
     
     integer i,j,k;
-    always@(posedge clk_i) begin
-//        delay_dv <= dv;
-        if(rst)begin
-            out_o = 0;
-            out_valid_o = 0;
-            round_out[0] = 0;
-            round_out[1] = 0;
-            round_out[2] = 0;
-        end
-        else if(dv_i)begin
-            //Round 1
-            round_out[0]=round(state_i,RC[rc_round]);
-            //Round 2
-            round_out[1]=round(round_out[0],RC[rc_round+1]);
-            //Round 3
-            round_out[2]=round(round_out[1],RC[rc_round+2]);
-            // Add more rounds according to the the value of 'rounds'
-            // Concatanate round outputs if output needed is multiple of 96
-            out_o = round_out[2];
-            
-            out_valid_o = dv_i;
+    always@(posedge clk) begin
+        if(dv)begin
+            out_o = round_out[rounds-1];
+            out_valid_o = dv;
         end
         else begin
-            out_o = 0;
             out_valid_o = 1'b0;
         end
     end
-        
-    function [95:0] round;
-        input [95:0] state;
-        input [31:0] RC;
-        begin
-            A[0] = state[31:0];
-            A[1] = state[63:32];
-            A[2] = state[95:64];
-            //theta
-            P = A[0] ^ A[1] ^ A[2]; //P <-- A0 xor A1 xor A2
-            E = {P[26:0],P[31:27]} ^ {P[17:0],P[31:18]}; //E <-- P <<< (1,5) xor P <<< (1,14). Since x=1, the equation reduces to E <-- P <<< (5) xor P <<< (14). <<< - cyclic shift
-            for(i=0;i<y;i=i+1)begin
-                A[i] = A[i] ^ E;
-            end
-            //rhowest 
-            A[2] = {A[2][20:0],A[2][31:21]}; //A2 <-- A2 <<< (0,11). A1 <-- A1 <<< (1,0) removed as x=1.
-            //iota
-            A[0] = A[0] ^ RC;
-            //chi
-            B[0] = ~A[1] & A[2];
-            B[1] = ~A[2] & A[0];
-            B[2] = ~A[0] & A[1];
-            for(j=0;j<y;j=j+1)begin
-                A[j] = A[j] ^ B[j];
-            end
-            //rhoeast 
-            A[1] = {A[1][30:0],A[1][31]}; //A1 <-- A1 <<< (0,1); reduces to A1 <-- A1 <<< (1)
-            A[2] = {A[2][23:0],A[2][31:24]}; //A2 <-- A2 <<< (2,8); reduces to A2 <-- A2 <<< (8)
-            
-            round={A[2],A[1],A[0]};
-        end
-    endfunction
-
 endmodule
+
+
+module round_fn#(
+parameter integer y=3 // number of (p)lanes.
+)
+(
+input [95:0] state,
+input [31:0] RC,
+output reg [95:0] round
+);
+
+    reg [31:0] A [0:y-1]; //plane A
+    reg [31:0] P=0;
+    reg [31:0] E, E1, E2;
+    reg [31:0] B [0:y-1];
+    
+    integer i,j;
+    always@(*)begin
+        A[0] = state[31:0];
+        A[1] = state[63:32];
+        A[2] = state[95:64];
+        //theta ?
+        P = A[0] ^ A[1] ^ A[2]; //P <-- A0 xor A1 xor A2
+        E = {P[26:0],P[31:27]} ^ {P[17:0],P[31:18]}; //E <-- P <<< (1,5) xor P <<< (1,14). Since x=1, the equation reduces to E <-- P <<< (5) xor P <<< (14). <<< - cyclic shift
+        for(i=0;i<y;i=i+1)begin
+            A[i] = A[i] ^ E;
+        end
+        //rhowest ?_west
+        A[2] = {A[2][20:0],A[2][31:21]}; //A2 <-- A2 <<< (0,11). A1 <-- A1 <<< (1,0) removed as x=1.
+        //iota ?
+        A[0] = A[0] ^ RC;
+        //chi ?
+        B[0] = ~A[1] & A[2];
+        B[1] = ~A[2] & A[0];
+        B[2] = ~A[0] & A[1];
+        for(j=0;j<y;j=j+1)begin
+            A[j] = A[j] ^ B[j];
+        end
+        //rhoeast ?_east
+        A[1] = {A[1][30:0],A[1][31]}; //A1 <-- A1 <<< (0,1); reduces to A1 <-- A1 <<< (1)
+        A[2] = {A[2][23:0],A[2][31:24]}; //A2 <-- A2 <<< (2,8); reduces to A2 <-- A2 <<< (8)
+        
+        round={A[2],A[1],A[0]};
+    end
+endmodule
+        
